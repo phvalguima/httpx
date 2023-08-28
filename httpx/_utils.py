@@ -409,17 +409,24 @@ class URLPattern:
         self.scheme = "" if url.scheme == "all" else url.scheme
         self.host = "" if url.host == "*" else url.host
         self.port = url.port
-        if not url.host or url.host == "*":
-            self.host_regex: typing.Optional[typing.Pattern[str]] = None
-        elif url.host.startswith("*."):
-            # *.example.com should match "www.example.com", but not "example.com"
-            domain = re.escape(url.host[2:])
-            self.host_regex = re.compile(f"^.+\\.{domain}$")
-        elif url.host.startswith("*"):
-            # *example.com should match "www.example.com" and "example.com"
-            domain = re.escape(url.host[1:])
-            self.host_regex = re.compile(f"^(.+\\.)?{domain}$")
-        else:
+        self.subnet_range = None
+        try:
+            if not url.host or url.host == "*":
+                self.host_regex: typing.Optional[typing.Pattern[str]] = None
+            elif url.host.startswith("*."):
+                # *.example.com should match "www.example.com", but not "example.com"
+                domain = re.escape(url.host[2:])
+                self.host_regex = re.compile(f"^.+\\.{domain}$")
+            elif url.host.startswith("*"):
+                # *example.com should match "www.example.com" and "example.com"
+                domain = re.escape(url.host[1:])
+                self.host_regex = re.compile(f"^(.+\\.)?{domain}$")
+            else:
+                # check if url is an ip_network
+                self.subnet_range = ipaddress.ip_network(self.pattern[len(url.scheme)+3:] if url.scheme else url.host)
+            if self.subnet_range or self.host_regex:
+                return
+        except ValueError:
             # example.com should match "example.com" but not "www.example.com"
             domain = re.escape(url.host)
             self.host_regex = re.compile(f"^{domain}$")
@@ -427,6 +434,14 @@ class URLPattern:
     def matches(self, other: "URL") -> bool:
         if self.scheme and self.scheme != other.scheme:
             return False
+        try:
+            if (
+                self.subnet_range
+                and ipaddress.IPv4Address(other.host) in self.subnet_range
+            ):
+                return True
+        except ValueError:
+            pass
         if (
             self.host
             and self.host_regex is not None
